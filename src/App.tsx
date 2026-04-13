@@ -10,13 +10,16 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, Users, ShoppingBag, CreditCard, 
-  Calendar, Filter, Download, Search, ChevronUp, ChevronDown
+  Filter, Download, Search, ChevronUp, ChevronDown, LogIn, LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, startOfMonth, endOfMonth, isWithinInterval, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { SaleRecord } from './types';
 import { parseSalesCSV } from './utils/dataParser';
 import { cn } from './lib/utils';
+import { auth } from './firebase';
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { subscribeToSalesData, seedInitialData, addSaleRecord } from './services/firebaseService';
 
 const INITIAL_CSV = `주문번호,상품명,가격(원),날짜,결제방식
 TT-1001,Slim-Fit Denim Jeans,114400,2025-08-15 0:00:00,Credit Card
@@ -143,11 +146,56 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [productFilter, setProductFilter] = useState('All');
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // 1단계: Firebase 인증 상태 감지
   useEffect(() => {
-    const parsed = parseSalesCSV(INITIAL_CSV);
-    setData(parsed);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+      
+      // 사용자가 로그인하면 초기 데이터 시딩 시도
+      if (currentUser) {
+        seedInitialData(INITIAL_CSV);
+      }
+    });
+    return () => unsubscribe();
   }, []);
+
+  // 2단계: Firestore 실시간 데이터 구독
+  useEffect(() => {
+    if (!user) {
+      setData([]);
+      return;
+    }
+
+    // subscribeToSalesData는 Firestore의 변경사항을 실시간으로 감지합니다.
+    const unsubscribe = subscribeToSalesData((newData) => {
+      setData(newData);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // 구글 로그인 처리
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("로그인 실패:", error);
+    }
+  };
+
+  // 로그아웃 처리
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("로그아웃 실패:", error);
+    }
+  };
 
   const filteredData = useMemo(() => {
     return data.filter(item => {
@@ -197,17 +245,54 @@ export default function App() {
   const uniqueProducts = useMemo(() => ['All', ...new Set(data.map(d => d.productName))], [data]);
   const uniquePayments = useMemo(() => ['All', ...new Set(data.map(d => d.paymentMethod))], [data]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
+    if (file && user) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const text = event.target?.result as string;
-        setData(parseSalesCSV(text));
+        const parsed = parseSalesCSV(text);
+        // 3단계: 업로드된 데이터를 Firestore에 하나씩 추가
+        for (const record of parsed) {
+          await addSaleRecord(record);
+        }
       };
       reader.readAsText(file);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200 max-w-md w-full text-center"
+        >
+          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+            <TrendingUp className="w-8 h-8 text-blue-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Sales Dashboard</h1>
+          <p className="text-slate-500 mb-8">데이터를 확인하려면 로그인이 필요합니다.</p>
+          <button 
+            onClick={handleLogin}
+            className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+          >
+            <LogIn className="w-5 h-5" />
+            Google 계정으로 시작하기
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans p-4 md:p-8">
@@ -216,7 +301,12 @@ export default function App() {
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Sales Dashboard</h1>
-            <p className="text-slate-500 mt-1">Real-time insights and performance metrics.</p>
+            <div className="flex items-center gap-2 mt-1">
+              <p className="text-slate-500">Welcome back, <span className="font-semibold text-slate-700">{user.displayName}</span></p>
+              <button onClick={handleLogout} className="text-xs text-rose-600 hover:underline flex items-center gap-1 ml-2">
+                <LogOut className="w-3 h-3" /> Logout
+              </button>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg shadow-sm cursor-pointer hover:bg-slate-50 transition-colors">

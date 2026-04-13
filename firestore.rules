@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // Collection: sales_data
+    // Fields:
+    //   - orderId: string
+    //   - productName: string
+    //   - price: number
+    //   - date: timestamp
+    //   - paymentMethod: string
+    
+    // 공통 헬퍼 함수
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // sales_data 컬렉션 규칙
+    match /sales_data/{saleId} {
+      // 읽기 권한: 인증된 사용자만 가능
+      allow read: if isAuthenticated();
+      
+      // 쓰기 권한: 인증된 사용자만 가능 (시딩 및 업로드용)
+      // 실제 운영 환경에서는 더 엄격한 검증이 필요합니다.
+      allow write: if isAuthenticated();
+    }
+  }
+}

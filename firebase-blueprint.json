@@ -1,0 +1,23 @@
+{
+  "entities": {
+    "SaleRecord": {
+      "title": "Sale Record",
+      "description": "A single sales transaction record",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "description": "Unique order identifier" },
+        "productName": { "type": "string", "description": "Name of the product sold" },
+        "price": { "type": "number", "description": "Price of the product in KRW" },
+        "date": { "type": "string", "format": "date-time", "description": "ISO timestamp of the sale" },
+        "paymentMethod": { "type": "string", "description": "Method used for payment" }
+      },
+      "required": ["orderId", "productName", "price", "date", "paymentMethod"]
+    }
+  },
+  "firestore": {
+    "/sales_data/{saleId}": {
+      "schema": "SaleRecord",
+      "description": "Collection of all sales transactions"
+    }
+  }
+}
